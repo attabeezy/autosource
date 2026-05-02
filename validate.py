@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from scipy import stats
-from typing import Any, dict
+from typing import Any, Dict
 
 # ---------------------------------------------------------------------------
 # Constants (fixed, do not modify)
@@ -236,17 +236,17 @@ def generate_datacard(
     # Per-variable fidelity
     var_details = []
     for var_name, p_value in ks_results.items():
-        status = "✓" if p_value >= MIN_KS_PVALUE else "✗"
+        status = "[PASS]" if p_value >= MIN_KS_PVALUE else "[FAIL]"
         var_details.append(f"- {status} **{var_name}**: KS p-value={p_value:.4f}")
 
     # Correlation details
-    corr_status = "✓" if corr_sim >= MIN_CORR_SIMILARITY else "✗"
+    corr_status = "[PASS]" if corr_sim >= MIN_CORR_SIMILARITY else "[FAIL]"
 
     # Bias status
-    bias_status = "✓" if bias_results["bias_score"] >= 0.8 else "⚠"
+    bias_status = "[PASS]" if bias_results["bias_score"] >= 0.8 else "[WARN]"
 
     # Privacy status
-    privacy_status = "✓" if privacy_results["avg_min_distance"] > 0 else "⚠"
+    privacy_status = "[PASS]" if privacy_results["avg_min_distance"] > 0 else "[WARN]"
 
     card = f"""# DATACARD: Synthetic Dataset
 
@@ -295,7 +295,7 @@ def generate_datacard(
 """
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(card)
 
     print(f"DATACARD saved to {output_path}")
@@ -386,9 +386,9 @@ def main():
     print(f"Bias score: {bias_results['bias_score']:.2%}")
 
     if fidelity_score >= MIN_FIDELITY_SCORE:
-        print("\n✓ Dataset passes all fidelity thresholds!")
+        print("\n[PASS] Dataset passes all fidelity thresholds!")
     else:
-        print(f"\n✗ Dataset falls below fidelity threshold ({MIN_FIDELITY_SCORE})")
+        print(f"\n[FAIL] Dataset falls below fidelity threshold ({MIN_FIDELITY_SCORE})")
 
 
 if __name__ == "__main__":

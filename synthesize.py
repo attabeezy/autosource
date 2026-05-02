@@ -131,7 +131,7 @@ def generate_correlated_dataset(
 
         # Apply correlation transform (rank substitution)
         if correlations:
-            ranks = stats.rankdata(base_data[:, i])
+            ranks = pd.Series(base_data[:, i]).rank()
             data_dict[var_name] = np.take(
                 np.sort(data_dict[var_name]), np.argsort(ranks).argsort()
             )

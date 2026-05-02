@@ -21,9 +21,8 @@ wheels/
 *.egg
 
 # Virtual environments
-venv/
 .venv/
-env/
+venv/
 ENV/
 
 # IDE
@@ -32,17 +31,23 @@ ENV/
 *.swp
 *.swo
 
-# AutoSource specific
+# Linting
+.ruff_cache/
+
+# Git (optional - uncomment if you want a fresh start)
+# .git/
+
+# AutoSource - downloaded/generated files
 source_library/*.pdf
 source_library/*.html
+source_library/catalog.json
+source_library/selector.md
 results/*.csv
 results/*.tsv
 results/*.md
 results/*.txt
-results/*.png
 results/*.log
-!results/parameters.json
-!results/data.csv
+results/*.png
 
 # OS
 .DS_Store
