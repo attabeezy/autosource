@@ -1,9 +1,0 @@
-pydantic>=2.10.0
-markdown>=3.7.0
-numpy>=2.2.0
-scipy>=1.15.0
-pandas>=2.2.0
-matplotlib>=3.10.0
-PyMuPDF>=1.25.0
-requests>=2.32.0
-tqdm>=4.67.0
