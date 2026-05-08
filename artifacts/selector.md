@@ -18,5 +18,5 @@ Review the reports below. Toggle `[x]` to select for processing.
 
 After selecting, run:
 ```bash
-uv run extract.py --pdf source_library/<selected_file>.pdf
+uv run extract.py --pdf artifacts/<selected_file>.pdf
 ```
