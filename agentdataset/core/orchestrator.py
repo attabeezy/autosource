@@ -18,6 +18,8 @@ from agentdataset.core.validator import Validator
 logger = logging.getLogger(__name__)
 
 MAX_NOISE = 2.0
+MIN_NOISE = 0.01
+PATIENCE = 2  # non-improvement streak length that triggers a pivot
 
 class Orchestrator:
     def __init__(self, session_id: str, base_dir: str = "sessions", model: str = "gpt-4o", api_key: str = ""):
@@ -60,12 +62,20 @@ class Orchestrator:
         return self.extractor.extract_parameters(text, result.title)
 
     def run_optimization_loop(self, parameters: Parameters, iterations: int = 5):
-        """Phase 2 & 3: The Engine (Synthesis-Validation Loop)."""
+        """Phase 2 & 3: The Engine (Synthesis-Validation Loop).
+
+        Noise pivot strategy — patience + reset:
+          - Every PATIENCE consecutive non-improvements  → exploit: halve noise
+          - Every PATIENCE*2 consecutive non-improvements → reset to initial noise
+          - Single non-improvement steps (streak % PATIENCE != 0) → explore: raise noise
+        """
         current_params = parameters
-        noise_level = 0.1
+        initial_noise = 0.1
+        noise_level = initial_noise
+        no_improve_streak = 0
 
         for i in range(iterations):
-            logger.info("Loop %d/%d...", i + 1, iterations)
+            logger.info("Loop %d/%d (noise=%.4f)...", i + 1, iterations, noise_level)
 
             # Synthesis
             df = self.synthesizer.synthesize(current_params, noise_level=noise_level)
@@ -80,6 +90,7 @@ class Orchestrator:
                 self.best_score = report.overall_score
                 self.best_params = current_params
                 self.best_data = df
+                no_improve_streak = 0
 
                 # Save artifacts
                 df.to_csv(Path(self.context.path) / "data.csv", index=False)
@@ -91,8 +102,23 @@ class Orchestrator:
                 with open(Path(self.context.path) / "DATACARD.md", "w") as f:
                     f.write(datacard)
             else:
-                logger.info("  [DISCARD] Score did not improve.")
-                # Strategy Pivot: increase noise, capped to avoid runaway degradation
-                noise_level = min(noise_level * 1.1, MAX_NOISE)
+                no_improve_streak += 1
+                full_cycle = PATIENCE * 2
+
+                if no_improve_streak % full_cycle == 0:
+                    # Full cycle with no gain — reset to initial noise
+                    noise_level = initial_noise
+                    logger.info("  [DISCARD] Streak=%d — reset noise to %.4f",
+                                no_improve_streak, noise_level)
+                elif no_improve_streak % PATIENCE == 0:
+                    # Exploit phase: tighten noise to improve fit
+                    noise_level = max(noise_level * 0.5, MIN_NOISE)
+                    logger.info("  [DISCARD] Streak=%d — exploit: noise → %.4f",
+                                no_improve_streak, noise_level)
+                else:
+                    # Explore phase: expand noise for more variance
+                    noise_level = min(noise_level * 1.1, MAX_NOISE)
+                    logger.info("  [DISCARD] Streak=%d — explore: noise → %.4f",
+                                no_improve_streak, noise_level)
 
         return self.best_score, self.best_data

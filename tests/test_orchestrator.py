@@ -56,21 +56,64 @@ def test_process_source_pdf_path(mock_orchestrator, tmp_path):
 
 def test_run_optimization_loop(mock_orchestrator):
     params = Parameters(
-        variables={"v1": VariableParams(name="v1")}, 
-        correlations={}, 
+        variables={"v1": VariableParams(name="v1")},
+        correlations={},
         meta=MetaParams(source="S", extracted_at="N")
     )
     df = pd.DataFrame({"v1": [1, 2, 3]})
     mock_orchestrator.synthesizer.synthesize.return_value = df
-    
-    # Mock validator report
+
     report = MagicMock()
     report.overall_score = 95.0
     mock_orchestrator.validator.validate.return_value = report
     mock_orchestrator.validator.generate_datacard.return_value = "mock datacard content"
-    
+
     score, data = mock_orchestrator.run_optimization_loop(params, iterations=1)
-    
+
     assert score == 95.0
     assert data.equals(df)
     assert mock_orchestrator.best_score == 95.0
+
+
+def test_noise_pivot_strategy(mock_orchestrator):
+    """Streak counter drives explore → exploit → reset transitions."""
+    from agentdataset.core.orchestrator import PATIENCE, MAX_NOISE, MIN_NOISE
+
+    params = Parameters(
+        variables={"v1": VariableParams(name="v1")},
+        correlations={},
+        meta=MetaParams(source="S", extracted_at="N")
+    )
+    df = pd.DataFrame({"v1": [1, 2, 3]})
+    mock_orchestrator.synthesizer.synthesize.return_value = df
+
+    # Scores: first improves (streak reset), then 4 consecutive non-improvements
+    # to exercise explore (streak 1), exploit (streak 2), explore (streak 3), reset (streak 4)
+    scores = [95.0, 80.0, 79.0, 78.0, 77.0]
+    reports = [MagicMock(overall_score=s) for s in scores]
+    mock_orchestrator.validator.validate.side_effect = reports
+    mock_orchestrator.validator.generate_datacard.return_value = ""
+
+    # Capture noise_level passed to synthesize on each call
+    noise_calls = []
+    original_synthesize = mock_orchestrator.synthesizer.synthesize
+    def capture_noise(params, noise_level):
+        noise_calls.append(noise_level)
+        return df
+    mock_orchestrator.synthesizer.synthesize.side_effect = capture_noise
+
+    mock_orchestrator.run_optimization_loop(params, iterations=5)
+
+    initial = 0.1
+    # iter 0: noise = 0.1, score 95 → keep, streak resets to 0
+    assert noise_calls[0] == pytest.approx(initial)
+    # iter 1: streak=1 (explore) → noise *= 1.1
+    assert noise_calls[1] == pytest.approx(initial)
+    explore_noise = initial * 1.1
+    # iter 2: streak=2 (exploit, streak % PATIENCE == 0) → noise *= 0.5
+    assert noise_calls[2] == pytest.approx(explore_noise)
+    exploit_noise = max(explore_noise * 0.5, MIN_NOISE)
+    # iter 3: streak=3 (explore again)
+    assert noise_calls[3] == pytest.approx(exploit_noise)
+    # iter 4: streak=4 (full cycle, streak % (PATIENCE*2) == 0) → reset
+    assert noise_calls[4] == pytest.approx(min(exploit_noise * 1.1, MAX_NOISE))
