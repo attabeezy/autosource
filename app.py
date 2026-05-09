@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import time
@@ -13,7 +14,7 @@ st.markdown("---")
 # --- Sidebar: Config ---
 with st.sidebar:
     st.header("Settings")
-    api_key = st.text_input("OpenAI API Key", type="password")
+    api_key = st.text_input("OpenAI API Key", value=os.environ.get("OPENAI_API_KEY", ""), type="password")
     model_choice = st.selectbox("LLM Model", ["gpt-4o", "gpt-3.5-turbo"])
     max_iters = st.slider("Max Optimization Loops", 1, 10, 5)
     
