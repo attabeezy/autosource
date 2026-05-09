@@ -70,7 +70,8 @@ class Validator:
         bias_count = 0
         for name, var_params in parameters.variables.items():
             if name in df.columns:
-                if abs(df[name].mean() - var_params.mean) / (var_params.mean or 1.0) > 0.2:
+                denom = abs(var_params.mean) if var_params.mean != 0 else (var_params.std or 1.0)
+                if abs(df[name].mean() - var_params.mean) / denom > 0.2:
                     bias_count += 1
         bias_score = 1.0 - (bias_count / len(parameters.variables)) if parameters.variables else 1.0
         
@@ -85,8 +86,8 @@ class Validator:
             corr_score=round(corr_sim * 100, 2),
             bias_score=round(bias_score * 100, 2),
             ks_pvalues=ks_pvalues,
-            bias_details={}, # Simplified
-            privacy_details={"avg_min_dist": 0.1}, # Placeholder
+            bias_details={},
+            privacy_details={},  # TODO: implement real privacy metric (e.g. avg min-distance)
             approved=overall_score >= self.thresholds["fidelity_score"]
         )
 
