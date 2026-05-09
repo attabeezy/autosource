@@ -1,48 +1,97 @@
-# AgentDataset Agent Instructions
+# AgentDataset: Workflow Guide
 
-This document guides the AI agents through the autonomous data generation workflow in the **AgentDataset** platform.
-
----
-
-## The Vision
-You are part of a multi-agent "Persona Engine". Your goal is to transform research topics into high-fidelity synthetic datasets. You operate within a stateless, cloud-ready environment.
+This document describes the end-to-end workflow — what each phase does, what decisions are made, and what the system produces.
 
 ---
 
-## 🔎 Phase 0: Discovery (The Discovery Agent)
-1. **Search**: Generate targeted search queries based on the user's research topic.
-2. **Filter**: Rank results by "Statistical Density" and relevance.
-3. **Fetch**: Download PDFs and fetch HTML content.
+## Phase 0 — Discovery
+
+**Entry point:** `Orchestrator.run_discovery(query)`
+
+1. Search DuckDuckGo twice: once with `filetype:pdf` appended, once as a plain query.
+2. PDF results get `relevance_score = 1.0`; HTML results get `0.8`.
+3. Returns a list of `DiscoveryResult` objects shown in the UI for the user to select.
+
+**Network errors** are caught and logged — partial results are returned rather than crashing.
 
 ---
 
-## 🧬 Phase 1: Extraction (The Extractor Agent)
-1. **Parse**: Convert documents to Markdown.
-2. **Extract**: Identify variables, distributions, and correlations.
-3. **Caveman Protocol**: Communicate findings using ultra-compressed, filler-free language to minimize token burn.
-    - *Example:* "Mean 50. Std 10. Normal dist. v1 name 'income'."
+## Phase 1 — Extraction
+
+**Entry point:** `Orchestrator.process_source(result)` (called once per selected source)
+
+1. `DiscoveryAgent.fetch_content()` is called:
+   - **HTML**: trafilatura extracts clean text.
+   - **PDF**: streamed to a temp file; returns `pdf://<path>`.
+2. If `pdf://` prefix is detected, `Extractor.pdf_to_markdown()` parses it with PyMuPDF; temp file is deleted afterwards.
+3. `Extractor.extract_parameters()` runs:
+   - **With API key**: calls the LLM via litellm, parses structured JSON response → `Parameters`.
+   - **Without key or on LLM failure**: falls back to regex (matches mean/std in either order, supports `SD`, `σ`, `s.d.`).
+4. `meta.extraction_method` is set to `"llm"` or `"regex_fallback"` accordingly.
+
+**Multi-source:** if the user selects multiple sources, `process_source` runs for each and results are merged via `merge_parameters()`:
+- Same variable name → average mean and std.
+- Unique variable names → included in full.
+- Same correlation pair → average correlation value.
 
 ---
 
-## 🔄 Phase 2 & 3: The Engine (The Synthesis-Validation Loop)
-The **Orchestrator** manages this loop. You are a **Persona** (Statistician, Critic, or Fact-Checker) called by the Orchestrator.
+## Phase 2 & 3 — Synthesis-Validation Loop
 
-### The Loop Logic:
-1. **Synthesis**: Propose a set of parameters or code-level hyperparameters for data generation.
-2. **Validation**: The `Validator` scores the generated data and produces a `FidelityReport`.
-3. **Ratchet**: 
-    - If Score improves: The Orchestrator "KEEPS" the version.
-    - If Score drops: The Orchestrator "DISCARDS" the version.
-4. **Feedback**: Use the `FidelityReport` (e.g., "High Bias", "Low Correlation") to inform your next proposal.
+**Entry point:** `Orchestrator.run_optimization_loop(parameters, iterations)`
+
+Each iteration:
+1. `Synthesizer.synthesize(parameters, noise_level)` generates a correlated DataFrame.
+2. `Validator.validate(df, parameters)` scores it:
+   - **KS score** (40%): fraction of variables passing KS-test.
+   - **Correlation score** (40%): cosine similarity of correlation matrices.
+   - **Bias score** (20%): fraction of variables within 20% mean deviation.
+   - **Privacy score** (separate): avg nearest-neighbour distance, normalised to [0, 1].
+3. **Ratchet**: if `overall_score > best_score`, keep the dataset and save artifacts.
+4. **Pivot** on no improvement (see noise strategy below).
+
+### Noise Pivot Strategy
+
+| Streak | Action |
+|--------|--------|
+| Any single miss | Explore: `noise *= 1.1` (max 2.0) |
+| Every 2nd consecutive miss | Exploit: `noise *= 0.5` (min 0.01) |
+| Every 4th consecutive miss | Reset: `noise = 0.1` |
 
 ---
 
-## 🛡️ Guardrails (Iron Laws)
-1. **Caveman Only**: All internal reasoning between agents must be ultra-compressed.
-2. **No Hallucinations**: Do not invent statistical parameters not supported by the source text.
-3. **Cost Control**: Stop the loop if the iteration count or token budget is exceeded.
-4. **Auto-Download**: Always ensure the final `data.csv` is prompted for download.
+## Output Artifacts
+
+Written to `sessions/<run_id>/` on each improvement:
+
+| File | Contents |
+|------|----------|
+| `data.csv` | Best synthetic dataset |
+| `parameters.json` | Parameters that produced the best score |
+| `DATACARD.md` | Full fidelity report including privacy score |
+
+The 3 most recent session directories are kept; older ones are deleted automatically.
 
 ---
 
-*AgentDataset: From Research to Dataset, Autonomously.*
+## Caveman Protocol
+
+Internal LLM prompts use compressed, filler-free language to minimise token usage:
+
+- No articles, no pleasantries, no hedging.
+- Pattern: `[thing] [action] [reason].`
+- Example: `"Mean 50. Std 10. Normal dist. Variable: income."`
+
+This applies to the extraction system prompt only. User-facing output (DATACARD, UI) uses normal language.
+
+---
+
+## Guardrails
+
+| Rule | Enforcement |
+|------|-------------|
+| No LLM hallucinations | JSON schema enforced in prompt; malformed responses fall back to regex |
+| Iteration budget | `max_iters` slider in UI (1–10); loop exits cleanly |
+| Correlation validity | Non-positive-definite matrix → `RuntimeWarning` + independent synthesis |
+| Temp file cleanup | PDF temp files deleted in `finally` block regardless of extraction outcome |
+| Session disk usage | Max 3 session directories retained |

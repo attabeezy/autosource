@@ -1,80 +1,125 @@
-# SPEC.md: AgentDataset Architecture & Plan
+# SPEC.md: AgentDataset Architecture
 
-## 1. Vision & Goals
-- **Product:** AgentDataset (formerly AutoSource).
-- **Mission:** An autonomous platform that discovers research documents (web/PDF) and orchestrates specialized AI agents to generate high-fidelity, train-ready synthetic datasets.
-- **Key Shift:** Moving from static, linear scripts to a dynamic, modular, and state-machine-driven architecture deployed as a Streamlit Cloud application.
+## 1. Overview
 
-## 2. Core Pillars
+AgentDataset is a 4-phase autonomous pipeline: discover research documents → extract statistical parameters → synthesize a dataset → validate fidelity. Each phase is a standalone module; the `Orchestrator` wires them together and manages the iterative refinement loop.
 
-### 2.1 The Discovery Layer (Phase 0)
-- **Role:** Autonomous knowledge acquisition.
-- **Capabilities:** Execute natural language queries to find, filter, and fetch relevant PDFs and HTML content.
-- **Integration:** Acts as the primary feed for the Extraction layer.
+---
 
-### 2.2 The Extraction Layer (Phase 1)
-- **Role:** Convert raw text into structured statistical "DNA" (`parameters.json`).
-- **Capabilities:** 
-    - Pluggable extraction schemas (e.g., Survey, Finance).
-    - **Pre-flight Checks:** Assess "Statistical Density" to prevent hallucination from narrative-heavy texts.
+## 2. Modules
 
-### 2.3 The Persona Engine & Validation Loop (Phase 2 & 3)
-- **Role:** Iterative refinement of synthetic data.
-- **The Orchestrator:** Manages the optimization loop, deploying specialized "Personas."
-- **Personas:** Distinct modules (e.g., "The Statistician", "The Critic") that propose parametric updates.
-- **Validation:** Provides a structured `FidelityReport` (KS-test, Correlation, Bias) to guide the next iteration.
+### 2.1 Discovery (`core/discovery.py`)
 
-### 2.4 The Dashboard (UI)
-- **Role:** The "Glass Box" interface.
-- **Stack:** Streamlit.
-- **Features:** Unified view of the Discovery, Synthesis heartbeat, live fidelity scoring, and an interactive DATACARD.
+- **Search**: DuckDuckGo (`DDGS`) queries for both `filetype:pdf` and general HTML results.
+- **PDF fetch**: `requests.get()` streams the file to a `NamedTemporaryFile`; returns `pdf://<path>` to the caller.
+- **HTML fetch**: `trafilatura` extracts clean text from the page.
+- **Error handling**: Network failures are caught and logged; snippet fallback is used for PDFs that fail to download.
 
-## 3. Architecture & State Management
+### 2.2 Extraction (`core/extractor.py`)
 
-### 3.1 Stateless & Cloud-Ready
-- **No Git:** Optimization uses in-memory parametric checkpoints, eliminating dependency on git branches/commits.
-- **Session Management:** Unique session IDs (`sessions/{timestamp}/`) track intermediate artifacts and metadata.
+- **LLM path** (when API key is present): calls `litellm.completion()` with a structured JSON prompt enforcing the schema below. `extraction_method = "llm"`.
+- **Regex fallback** (on any LLM failure or no key): two regex patterns match mean/std pairs in either order, including `SD`, `σ`, `s.d.` variants. `extraction_method = "regex_fallback"`.
+- **PDF parsing**: `fitz` (PyMuPDF) converts each page to text; temp file is deleted after parsing.
+- **Statistical density check**: ratio of numeric tokens to word tokens — used to assess whether a document is worth extracting from.
 
-### 3.2 Directory Structure
-```text
-agentdataset/
-├── app.py                 # Streamlit main entry point
-├── core/
-│   ├── orchestrator.py    # State machine and loop control
-│   ├── discovery.py       # Web search and document fetch
-│   ├── extractor.py       # PDF/HTML parsing & parameter extraction
-│   ├── synthesizer.py     # Persona-driven generation logic
-│   └── validator.py       # Fidelity scoring
-├── models/
-│   └── schemas.py         # Pydantic data models for structured IO
-└── sessions/              # Ephemeral workspace for active runs
+**LLM output schema:**
+```json
+{
+  "variables": {
+    "<name>": {"distribution": "normal|uniform|gamma", "mean": 0.0, "std": 1.0, "min": null, "max": null}
+  },
+  "correlations": {
+    "<key>": {"var1": "<name>", "var2": "<name>", "correlation": 0.5, "direction": "positive|negative"}
+  }
+}
 ```
 
-## 4. Safety & Stability (Guardrails)
+### 2.3 Orchestrator (`core/orchestrator.py`)
 
-### 4.1 "Caveman" Communication Protocol (Anti-Chattiness)
-- **Principle:** Enforce ultra-compressed, filler-free communication across all internal agent interactions to reduce token burn (up to 75%) and prevent LLM "babble".
-- **Rules:**
-  - **No Fluff:** Drop articles (a, an, the) and filler words (just, really, basically).
-  - **No Pleasantries:** Eliminate greetings, hedging, and non-committal language.
-  - **Structural Pattern:** Force interactions into strict `[thing] [action] [reason]. [next step].` formats (e.g., "High bias age. Copula skewed. Fix: Increase noise 0.1.").
-  - **Exception:** Final outputs (like DATACARD.md and user-facing UI text) revert to professional, clear language.
+Central controller. Key responsibilities:
 
-### 4.2 Cost Control (Token Burn)
-- Hard limits on the maximum number of loop iterations and API token usage per session.
-- System prompt instructions enforce the "Caveman" protocol for all underlying LLM calls.
+- **Session management**: creates `sessions/<run_id>/`; prunes oldest dirs beyond `MAX_SESSIONS = 3`.
+- **Multi-source merging** (`merge_parameters`): when multiple sources are selected, averages same-named variables and unions unique ones; averages duplicate correlation pairs.
+- **PDF dispatch**: detects `pdf://` prefix from Discovery, routes to `extractor.pdf_to_markdown()`, then deletes the temp file.
+- **Optimization loop**: iterates Synthesis → Validation with a ratchet + pivot strategy (see §3).
+- **Artifact saving**: best `data.csv`, `parameters.json`, and `DATACARD.md` are written to the session directory on each improvement.
 
-### 4.3 UI Concurrency
-- Utilization of Streamlit's `st.session_state` and background execution strategies to prevent loop restarts on UI interactions.
+### 2.4 Synthesizer (`core/synthesizer.py`)
 
-### 4.4 Convergence Control (Anti-Plateau)
-- Implementation of a "Patience Counter": If fidelity fails to improve after $N$ iterations, force a strategic pivot or gracefully halt.
+- Generates per-variable data arrays from `VariableParams` (normal, uniform, gamma).
+- Applies `noise_level` to all three distributions (uniform expands bounds symmetrically).
+- Builds correlation structure via Cholesky decomposition on the correlation matrix; applies it via rank transform.
+- Uses `np.random.default_rng(seed)` — instance-scoped, does not mutate global NumPy state.
+- Emits a `RuntimeWarning` if the correlation matrix is not positive-definite (falls back to independent synthesis).
 
-### 4.5 Data Persistence
-- **Auto-Download:** Automatically prompt the user to download the generated `data.csv` and `DATACARD.md` upon successful completion to mitigate Streamlit Cloud's ephemeral filesystem risks.
+### 2.5 Validator (`core/validator.py`)
 
-## 5. Implementation Phases
-1. **Phase 1: Project Restructure & Models:** Move scripts into the `core/` package and define Pydantic schemas. Apply Caveman prompt rules.
-2. **Phase 2: Discovery & Extraction:** Implement the search agent and robust extraction logic.
-3. **Phase 3: The Engine:** Build the Orchestrator, Persona Engine, and Stateless Validation loop.
-4. **Phase 4: Streamlit UI:** Wire the backend to `app.py` and implement session tracking and auto-download.
+Produces a `FidelityReport` with four components:
+
+| Component | Weight | Method |
+|-----------|--------|--------|
+| KS score | 40% | Fraction of variables passing KS-test (`p ≥ 0.05`), × 100 |
+| Correlation score | 40% | Cosine similarity of synthetic vs target correlation matrices |
+| Bias score | 20% | Fraction of variables within 20% mean deviation |
+| Privacy score | — (reported separately) | Avg nearest-neighbour distance on 500-row subsample, normalised to [0, 1] |
+
+Distribution CDFs used in KS-test: `stats.norm` (normal), `stats.uniform` (uniform), `stats.gamma` (gamma).
+
+---
+
+## 3. Optimization Loop & Noise Pivot
+
+The loop runs for `iterations` steps. On each step:
+
+1. Synthesize a dataset with current `noise_level`.
+2. Validate → get `overall_score`.
+3. **If score improves**: save artifacts, reset `no_improve_streak = 0`.
+4. **If score does not improve**: increment `no_improve_streak` and pivot:
+
+```
+streak % 1               → explore:  noise *= 1.1  (cap MAX_NOISE = 2.0)
+streak % PATIENCE == 0   → exploit:  noise *= 0.5  (floor MIN_NOISE = 0.01)
+streak % (PATIENCE*2)==0 → reset:    noise = initial (0.1)
+```
+
+`PATIENCE = 2` — so the cycle is: explore → exploit → explore → reset.
+
+---
+
+## 4. API Provider Support
+
+Managed via `litellm`. The provider is selected in the UI; `Extractor` receives the matching `env_var` name and sets it before each LLM call.
+
+| Provider | `env_var` | litellm model prefix |
+|----------|-----------|----------------------|
+| OpenAI | `OPENAI_API_KEY` | none (e.g. `gpt-4o`) |
+| Anthropic | `ANTHROPIC_API_KEY` | none (e.g. `claude-sonnet-4-6`) |
+| Google | `GEMINI_API_KEY` | `gemini/` (e.g. `gemini/gemini-2.0-flash`) |
+
+---
+
+## 5. Data Models (`models/schemas.py`)
+
+| Model | Purpose |
+|-------|---------|
+| `VariableParams` | Distribution type, mean, std, min, max |
+| `CorrelationParams` | var1, var2, correlation coefficient, direction |
+| `MetaParams` | Source name, extraction timestamp, method |
+| `Parameters` | Full parameter set (variables + correlations + meta) |
+| `FidelityReport` | All scores, KS p-values, bias/privacy details, approved flag |
+| `SessionContext` | Session ID, filesystem path, creation time |
+| `DiscoveryResult` | Title, URL, source type, relevance score, snippet |
+
+---
+
+## 6. Session Filesystem
+
+```
+sessions/
+└── run_<timestamp>/
+    ├── data.csv          # Best synthetic dataset
+    ├── parameters.json   # Parameters used for best run
+    └── DATACARD.md       # Fidelity + privacy report
+```
+
+Only the 3 most recent session directories are retained. Older ones are deleted at `Orchestrator.__init__`.
