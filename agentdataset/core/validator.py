@@ -27,15 +27,15 @@ class Validator:
             if name not in df.columns: continue
             data = df[name].values
             
-            # Theoretical CDF mapping
+            # Theoretical CDF mapping — use default-arg capture to avoid late-binding closure bug
             if var_params.distribution == "normal":
-                theoretical_cdf = lambda x: stats.norm.cdf(x, loc=var_params.mean, scale=var_params.std)
+                theoretical_cdf = lambda x, m=var_params.mean, s=var_params.std: stats.norm.cdf(x, loc=m, scale=s)
             elif var_params.distribution == "uniform":
                 low = var_params.min if var_params.min is not None else var_params.mean - 2*var_params.std
                 high = var_params.max if var_params.max is not None else var_params.mean + 2*var_params.std
-                theoretical_cdf = lambda x: stats.uniform.cdf(x, loc=low, scale=high-low)
+                theoretical_cdf = lambda x, l=low, h=high: stats.uniform.cdf(x, loc=l, scale=h-l)
             else:
-                theoretical_cdf = lambda x: stats.norm.cdf(x, loc=var_params.mean, scale=var_params.std)
+                theoretical_cdf = lambda x, m=var_params.mean, s=var_params.std: stats.norm.cdf(x, loc=m, scale=s)
             
             _, p_val = stats.kstest(data, theoretical_cdf)
             results[name] = float(p_val)
