@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 import pandas as pd
 from agentdataset.core.orchestrator import Orchestrator
+from agentdataset.core.discovery import PDF_PATH_PREFIX
 from agentdataset.models.schemas import Parameters, VariableParams, MetaParams, DiscoveryResult
 
 @pytest.fixture
@@ -22,14 +23,36 @@ def test_run_discovery(mock_orchestrator):
     assert len(results) == 1
     mock_orchestrator.discovery.search.assert_called_once_with("query")
 
-def test_process_source(mock_orchestrator):
-    res = DiscoveryResult(title="T", url="U", source_type="pdf", relevance_score=1.0)
-    mock_orchestrator.discovery.fetch_content.return_value = "content"
+def test_process_source_plain_text(mock_orchestrator):
+    res = DiscoveryResult(title="T", url="U", source_type="html", relevance_score=1.0)
+    mock_orchestrator.discovery.fetch_content.return_value = "plain text content"
     mock_orchestrator.extractor.extract_parameters.return_value = Parameters(
         variables={}, correlations={}, meta=MetaParams(source="S", extracted_at="N")
     )
     params = mock_orchestrator.process_source(res)
     assert isinstance(params, Parameters)
+    mock_orchestrator.extractor.pdf_to_markdown.assert_not_called()
+    mock_orchestrator.extractor.extract_parameters.assert_called_once_with("plain text content", "T")
+
+
+def test_process_source_pdf_path(mock_orchestrator, tmp_path):
+    """pdf:// prefix triggers pdf_to_markdown then cleans up the temp file."""
+    fake_pdf = tmp_path / "doc.pdf"
+    fake_pdf.write_bytes(b"PDF")
+
+    res = DiscoveryResult(title="T", url="U", source_type="pdf", relevance_score=1.0)
+    mock_orchestrator.discovery.fetch_content.return_value = PDF_PATH_PREFIX + str(fake_pdf)
+    mock_orchestrator.extractor.pdf_to_markdown.return_value = "parsed markdown"
+    mock_orchestrator.extractor.extract_parameters.return_value = Parameters(
+        variables={}, correlations={}, meta=MetaParams(source="S", extracted_at="N")
+    )
+
+    params = mock_orchestrator.process_source(res)
+
+    assert isinstance(params, Parameters)
+    mock_orchestrator.extractor.pdf_to_markdown.assert_called_once_with(str(fake_pdf))
+    mock_orchestrator.extractor.extract_parameters.assert_called_once_with("parsed markdown", "T")
+    assert not fake_pdf.exists(), "Temp PDF should be deleted after processing"
 
 def test_run_optimization_loop(mock_orchestrator):
     params = Parameters(

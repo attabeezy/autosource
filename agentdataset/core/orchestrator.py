@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, List
 import pandas as pd
 from agentdataset.models.schemas import SessionContext, Parameters, FidelityReport, DiscoveryResult
-from agentdataset.core.discovery import DiscoveryAgent
+from agentdataset.core.discovery import DiscoveryAgent, PDF_PATH_PREFIX
 from agentdataset.core.extractor import Extractor
 from agentdataset.core.synthesizer import Synthesizer
 from agentdataset.core.validator import Validator
@@ -43,10 +43,21 @@ class Orchestrator:
     def process_source(self, result: DiscoveryResult) -> Parameters:
         """Phase 1: Extraction."""
         content = self.discovery.fetch_content(result)
-        # If it's a PDF URL, we'd normally download it first.
-        # For simplicity, we assume 'content' is the text or we handle download.
-        params = self.extractor.extract_parameters(content, result.title)
-        return params
+
+        if content.startswith(PDF_PATH_PREFIX):
+            pdf_path = content[len(PDF_PATH_PREFIX):]
+            try:
+                text = self.extractor.pdf_to_markdown(pdf_path)
+            finally:
+                # Clean up temp file regardless of extraction outcome
+                try:
+                    os.remove(pdf_path)
+                except OSError:
+                    pass
+        else:
+            text = content
+
+        return self.extractor.extract_parameters(text, result.title)
 
     def run_optimization_loop(self, parameters: Parameters, iterations: int = 5):
         """Phase 2 & 3: The Engine (Synthesis-Validation Loop)."""
