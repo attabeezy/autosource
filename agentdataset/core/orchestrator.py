@@ -22,7 +22,8 @@ MIN_NOISE = 0.01
 PATIENCE = 2  # non-improvement streak length that triggers a pivot
 
 class Orchestrator:
-    def __init__(self, session_id: str, base_dir: str = "sessions", model: str = "gpt-4o", api_key: str = ""):
+    def __init__(self, session_id: str, base_dir: str = "sessions", model: str = "gpt-4o",
+                 api_key: str = "", env_var: str = "OPENAI_API_KEY"):
         self.context = SessionContext(
             session_id=session_id,
             path=str(Path(base_dir) / session_id)
@@ -30,7 +31,7 @@ class Orchestrator:
         os.makedirs(self.context.path, exist_ok=True)
 
         self.discovery = DiscoveryAgent()
-        self.extractor = Extractor(model=model, api_key=api_key)
+        self.extractor = Extractor(model=model, api_key=api_key, env_var=env_var)
         self.synthesizer = Synthesizer()
         self.validator = Validator()
 

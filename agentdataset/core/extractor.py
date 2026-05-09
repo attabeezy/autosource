@@ -52,9 +52,10 @@ _PATTERN_STD_MEAN = re.compile(
 
 
 class Extractor:
-    def __init__(self, model: str = "gpt-4o", api_key: str = ""):
+    def __init__(self, model: str = "gpt-4o", api_key: str = "", env_var: str = "OPENAI_API_KEY"):
         self.model = model
         self.api_key = api_key
+        self.env_var = env_var
 
     def pdf_to_markdown(self, pdf_path: str) -> str:
         """Convert PDF to clean text."""
@@ -69,7 +70,7 @@ class Extractor:
     def _extract_with_llm(self, text: str) -> Dict[str, Any]:
         """Call litellm and return parsed JSON dict. Raises on any failure."""
         if self.api_key:
-            os.environ["OPENAI_API_KEY"] = self.api_key
+            os.environ[self.env_var] = self.api_key
 
         prompt = f"Extract stats from this text:\n\n{text[:10000]}"
         response = completion(
@@ -145,7 +146,7 @@ class Extractor:
         variables: Dict[str, VariableParams] = {}
         correlations: Dict[str, CorrelationParams] = {}
 
-        if self.api_key or os.environ.get("OPENAI_API_KEY"):
+        if self.api_key or os.environ.get(self.env_var):
             try:
                 data = self._extract_with_llm(text)
                 variables, correlations = self._parse_llm_result(data)
