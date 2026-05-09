@@ -34,6 +34,10 @@ class Validator:
                 low = var_params.min if var_params.min is not None else var_params.mean - 2*var_params.std
                 high = var_params.max if var_params.max is not None else var_params.mean + 2*var_params.std
                 theoretical_cdf = lambda x, l=low, h=high: stats.uniform.cdf(x, loc=l, scale=h-l)
+            elif var_params.distribution == "gamma":
+                shape = (var_params.mean / var_params.std) ** 2
+                scale = var_params.std ** 2 / var_params.mean
+                theoretical_cdf = lambda x, a=shape, sc=scale: stats.gamma.cdf(x, a=a, scale=sc)
             else:
                 theoretical_cdf = lambda x, m=var_params.mean, s=var_params.std: stats.norm.cdf(x, loc=m, scale=s)
             
