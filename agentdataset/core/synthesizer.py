@@ -3,6 +3,7 @@ AgentDataset Synthesizer
 Parameters -> DataFrame (Persona-Driven)
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List
@@ -59,7 +60,11 @@ class Synthesizer:
                 L = np.linalg.cholesky(corr_matrix)
                 base_data = base_data @ L.T
             except np.linalg.LinAlgError:
-                pass # Fallback to independence
+                warnings.warn(
+                    "Correlation matrix is not positive-definite; synthesizing variables independently.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         data_dict = {}
         for i, name in enumerate(var_names):
