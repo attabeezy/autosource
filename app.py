@@ -50,7 +50,7 @@ with st.sidebar:
 
 # --- Session State ---
 # Recreate the orchestrator whenever provider or model changes
-config_key = (provider_choice, model_choice)
+config_key = (provider_choice, model_choice, api_key)
 if "orchestrator" not in st.session_state or st.session_state.get("config_key") != config_key:
     session_id = f"run_{int(time.time())}"
     st.session_state.orchestrator = Orchestrator(
