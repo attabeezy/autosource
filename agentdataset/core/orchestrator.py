@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 MAX_NOISE = 2.0
 
 class Orchestrator:
-    def __init__(self, session_id: str, base_dir: str = "sessions"):
+    def __init__(self, session_id: str, base_dir: str = "sessions", model: str = "gpt-4o"):
         self.context = SessionContext(
             session_id=session_id,
             path=str(Path(base_dir) / session_id)
@@ -28,7 +28,7 @@ class Orchestrator:
         os.makedirs(self.context.path, exist_ok=True)
 
         self.discovery = DiscoveryAgent()
-        self.extractor = Extractor()
+        self.extractor = Extractor(model=model)
         self.synthesizer = Synthesizer()
         self.validator = Validator()
 
