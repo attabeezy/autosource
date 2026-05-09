@@ -74,8 +74,9 @@ class Validator:
                     bias_count += 1
         bias_score = 1.0 - (bias_count / len(parameters.variables)) if parameters.variables else 1.0
         
-        # Overall Score
-        ks_score = (min(1.0, sum(ks_pvalues.values()) / (len(ks_pvalues) or 1) / 0.05)) * 100
+        # Overall Score: fraction of variables whose distribution fits (p >= threshold), scaled 0-100
+        passing = sum(1 for p in ks_pvalues.values() if p >= self.thresholds["ks_pvalue"])
+        ks_score = (passing / len(ks_pvalues)) * 100 if ks_pvalues else 100.0
         overall_score = 0.4 * ks_score + 0.4 * (corr_sim * 100) + 0.2 * (bias_score * 100)
         
         return FidelityReport(
